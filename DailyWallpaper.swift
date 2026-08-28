@@ -26,7 +26,18 @@ struct DailyWallpaper {
     static func main() async {
         do {
             let endpoint = URL(string: "https://bing.wdbyte.com/today")!
-            let (jsonData, response) = try await URLSession.shared.data(from: endpoint)
+
+            var request = URLRequest(
+                url: endpoint,
+                cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+                timeoutInterval: 30
+            )
+
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+            let (jsonData, response) = try await URLSession.shared.data(
+                for: request
+            )
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw WallpaperError.invalidHTTPResponse
