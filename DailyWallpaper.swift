@@ -24,6 +24,13 @@ enum WallpaperError: Error {
 struct DailyWallpaper {
     @MainActor
     static func main() async {
+        let runStartedAt = Date()
+        let logDateFormatter = DateFormatter()
+        logDateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        logDateFormatter.timeZone = .current
+        logDateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss ZZZZZ"
+        let runTime = logDateFormatter.string(from: runStartedAt)
+
         do {
             let dateFormatter = DateFormatter()
             dateFormatter.locale = Locale(identifier: "en_US_POSIX")
@@ -36,7 +43,7 @@ struct DailyWallpaper {
             components.queryItems = [
                 URLQueryItem(
                     name: "date",
-                    value: dateFormatter.string(from: Date())
+                    value: dateFormatter.string(from: runStartedAt)
                 )
             ]
             let endpoint = components.url!
@@ -113,11 +120,11 @@ struct DailyWallpaper {
                 )
             }
 
-            print("壁纸更新成功：\(wallpaper.date)")
-            print(wallpaper.desc)
-            print("保存位置：\(imageURL.path)")
+            print("[\(runTime)] 壁纸更新成功：\(wallpaper.date)")
+            print("[\(runTime)] \(wallpaper.desc)")
+            print("[\(runTime)] 保存位置：\(imageURL.path)")
         } catch {
-            fputs("壁纸更新失败：\(error)\n", stderr)
+            fputs("[\(runTime)] 壁纸更新失败：\(error)\n", stderr)
             exit(1)
         }
     }
