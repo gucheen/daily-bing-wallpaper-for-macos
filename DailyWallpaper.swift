@@ -25,7 +25,21 @@ struct DailyWallpaper {
     @MainActor
     static func main() async {
         do {
-            let endpoint = URL(string: "https://bing.wdbyte.com/today")!
+            let dateFormatter = DateFormatter()
+            dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+            dateFormatter.timeZone = .current
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+
+            var components = URLComponents(
+                string: "https://bing.wdbyte.com/today"
+            )!
+            components.queryItems = [
+                URLQueryItem(
+                    name: "date",
+                    value: dateFormatter.string(from: Date())
+                )
+            ]
+            let endpoint = components.url!
 
             var request = URLRequest(
                 url: endpoint,
