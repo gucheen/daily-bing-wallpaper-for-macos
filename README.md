@@ -1,130 +1,88 @@
-# Daily Bing Wallpaper for macOS
+# Daily Wallpaper · 每日壁纸
 
-每天从 [Bing Wallpaper API](https://bing.wdbyte.com/today) 获取今日壁纸，并自动设置为 macOS 桌面背景。
+标准 macOS 菜单栏应用：每天获取 Bing 壁纸，跟随系统明暗模式切换原图和深色版。双击启动，不显示 Dock 图标或主窗口，点击右上角的图片图标操作。
 
-## 环境要求
+- 每天本地时间 9:00 更新；无缓存时立即下载，错过更新时间会在启动或唤醒后补更新。
+- 深色版压低高光并适度降低曝光，原图单独保留；外观切换无需重新下载。
+- 下载失败保留上次壁纸，10 分钟后重试。
+- 菜单提供立即更新、打开壁纸目录、关于和退出。
+- 同一用户只运行一个实例。
 
-- macOS
-- Xcode Command Line Tools
-- Swift 5.5 或更高版本
+## 构建
 
-安装编译工具：
+需要 macOS 12 或更高版本、Python 3 和 Xcode Command Line Tools：
 
 ```bash
 xcode-select --install
+make build
 ```
 
-## 编译
-
-项目中包含 `DailyWallpaper.swift`，执行：
+输出应用：`build/Daily Wallpaper.app`。可以直接在 Finder 中双击，也可以运行：
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-
-swiftc -parse-as-library \
-  DailyWallpaper.swift \
-  -framework AppKit \
-  -o "$HOME/.local/bin/daily-wallpaper"
+open "build/Daily Wallpaper.app"
 ```
 
-## 手动运行
+构建脚本生成当前 Mac 架构的可执行文件、多尺寸应用图标、Info.plist，并进行本地 ad-hoc 签名及验证。此产物用于本机运行；对外分发需要自己的 Developer ID 签名和 Apple 公证。
+
+## 安装
+
+退出正在运行的旧版，然后执行：
 
 ```bash
-"$HOME/.local/bin/daily-wallpaper"
+make install
+open "$HOME/Applications/Daily Wallpaper.app"
 ```
 
-壁纸会保存到：
+应用安装到当前用户的 `~/Applications`，也可以手动将构建好的应用拖到“应用程序”文件夹。更新时先通过菜单栏退出，再替换应用。
+
+## 登录时启动
+
+先将应用安装到固定位置，然后打开 **系统设置 → 通用 → 登录项**（部分系统版本显示为“登录项与扩展”），在“登录时打开”中添加 `Daily Wallpaper.app`。
+
+每天的更新由应用管理，无需 LaunchAgent。点击菜单中的“退出每日壁纸”后，本次登录期间停止运行，下次登录仍会按照登录项设置启动。
+
+## 从旧版迁移
+
+先停止旧版任务，避免旧进程占用单实例锁。默认旧 plist 的卸载命令：
+
+```bash
+launchctl bootout "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
+```
+
+确认不再需要旧任务后删除它：
+
+```bash
+rm "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
+```
+
+如果旧任务使用其他文件名，请替换为实际名称。未通过 LaunchAgent 启动的旧版，可从旧菜单栏退出或在对应终端按 `Ctrl+C`。旧版 `~/.local/bin/daily-wallpaper` 不再需要。
+
+原图、深色版及缓存继续使用同一目录，升级无需迁移数据：
 
 ```text
 ~/Library/Application Support/DailyWallpaper/
 ```
 
-## 设置每日自动运行
-
-创建文件：
-
-```text
-~/Library/LaunchAgents/com.example.daily-wallpaper.plist
-```
-
-内容如下，将 `/Users/你的用户名` 替换为实际用户目录：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.example.daily-wallpaper</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/你的用户名/.local/bin/daily-wallpaper</string>
-    </array>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>StandardOutPath</key>
-    <string>/Users/你的用户名/Library/Logs/daily-wallpaper.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/Users/你的用户名/Library/Logs/daily-wallpaper-error.log</string>
-</dict>
-</plist>
-```
-
-加载定时任务：
+## 验证和排查
 
 ```bash
-launchctl bootstrap \
-  "gui/$(id -u)" \
-  "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
+make test
 ```
 
-立即测试：
+测试覆盖每日更新时间、深色图生成、原图保留、缓存读写和损坏图片拒绝。
+
+手动验证：双击应用后检查菜单栏图标；点击“关于”查看版本；切换系统浅色/深色外观，检查壁纸和菜单状态；检查睡眠唤醒、外接显示器及退出。部分桌面空间的设置可能需要切换到该空间后才生效。
+
+需要查看控制台输出时，先退出应用，再从终端启动包内可执行文件：
 
 ```bash
-launchctl kickstart -k \
-  "gui/$(id -u)/com.example.daily-wallpaper"
+"build/Daily Wallpaper.app/Contents/MacOS/DailyWallpaper"
 ```
 
-## 卸载定时任务
-
-```bash
-launchctl bootout \
-  "gui/$(id -u)" \
-  "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
-```
-
-## 查看日志
-
-```bash
-tail -f "$HOME/Library/Logs/daily-wallpaper.log"
-```
-
-错误日志：
-
-```bash
-tail -f "$HOME/Library/Logs/daily-wallpaper-error.log"
-```
+Finder 启动的版本不再通过旧 LaunchAgent 写入日志文件。
 
 ## 数据来源
 
-每日壁纸信息由以下接口提供：
-
-```text
-https://bing.wdbyte.com/today
-```
-
-图片版权归原作者及相关权利方所有，本工具仅供个人桌面壁纸使用。
+每日壁纸信息：[Bing Wallpaper API](https://bing.wdbyte.com/today)。图片版权归原作者及相关权利方所有，本工具仅供个人桌面壁纸使用。
