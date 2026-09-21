@@ -27,7 +27,7 @@ open "build/Daily Wallpaper.app"
 
 ## 安装
 
-退出正在运行的旧版，然后执行：
+执行以下命令安装应用：
 
 ```bash
 make install
@@ -40,26 +40,11 @@ open "$HOME/Applications/Daily Wallpaper.app"
 
 先将应用安装到固定位置，然后打开 **系统设置 → 通用 → 登录项**（部分系统版本显示为“登录项与扩展”），在“登录时打开”中添加 `Daily Wallpaper.app`。
 
-每天的更新由应用管理，无需 LaunchAgent。点击菜单中的“退出每日壁纸”后，本次登录期间停止运行，下次登录仍会按照登录项设置启动。
+每天的更新由应用管理。点击菜单中的“退出每日壁纸”后，本次登录期间停止运行，下次登录仍会按照登录项设置启动。
 
-## 从旧版迁移
+## 壁纸存储
 
-先停止旧版任务，避免旧进程占用单实例锁。默认旧 plist 的卸载命令：
-
-```bash
-launchctl bootout "gui/$(id -u)" \
-  "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
-```
-
-确认不再需要旧任务后删除它：
-
-```bash
-rm "$HOME/Library/LaunchAgents/com.example.daily-wallpaper.plist"
-```
-
-如果旧任务使用其他文件名，请替换为实际名称。未通过 LaunchAgent 启动的旧版，可从旧菜单栏退出或在对应终端按 `Ctrl+C`。旧版 `~/.local/bin/daily-wallpaper` 不再需要。
-
-原图、深色版及缓存继续使用同一目录，升级无需迁移数据：
+原图、深色版及缓存保存在：
 
 ```text
 ~/Library/Application Support/DailyWallpaper/
@@ -80,8 +65,6 @@ make test
 ```bash
 "build/Daily Wallpaper.app/Contents/MacOS/DailyWallpaper"
 ```
-
-Finder 启动的版本不再通过旧 LaunchAgent 写入日志文件。
 
 ## 数据来源
 
