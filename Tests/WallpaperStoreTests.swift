@@ -4,7 +4,7 @@ import Foundation
 
 @main
 struct WallpaperStoreTests {
-    static func main() throws {
+    static func main() async throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
         func date(_ day: Int, _ hour: Int) -> Date {
@@ -50,6 +50,64 @@ struct WallpaperStoreTests {
             _ = try WallpaperStore.prepare(wallpaper, data: Data("invalid".utf8), in: directory, now: Date())
             fatalError("Invalid image was accepted")
         } catch WallpaperError.invalidImage { }
-        print("PASS: scheduling, dark rendering, original preservation, cache round trip, invalid image")
+        func remote(_ day: String, name: String = "../../outside.png",
+                    url: String = "https://example.com/test.png") -> Wallpaper {
+            Wallpaper(fileName: name, url: URL(string: url)!, date: day, region: "cn", desc: "Updated")
+        }
+        var requests: [URL] = []
+        let evening = date(21, 18)
+        func fetch(_ wallpaper: Wallpaper, current: CachedWallpaper? = cached,
+                   now: Date = evening, imageData: Data = data) async throws -> CachedWallpaper {
+            requests = []
+            return try await WallpaperStore.fetch(in: directory, current: current, now: now,
+                                                 calendar: calendar) { url in
+                requests.append(url)
+                if url.host == "bing.wdbyte.com" {
+                    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+                    precondition(query.first?.value == (now == date(22, 9) ? "2026-09-22" : "2026-09-21"))
+                    return try JSONEncoder().encode(wallpaper)
+                }
+                return imageData
+            }
+        }
+        for staleDate in ["2026-09-20", "2026-09-22", "invalid"] {
+            do {
+                _ = try await fetch(remote(staleDate))
+                fatalError("Non-current date was accepted")
+            } catch WallpaperError.wallpaperNotUpdated { }
+            precondition(requests.count == 1)
+        }
+        let unchanged = try await fetch(remote("2026-09-21"))
+        precondition(requests.count == 1)
+        precondition(unchanged.originalName == cached.originalName && unchanged.darkName == cached.darkName)
+        precondition(unchanged.refreshedAt == date(21, 18) && unchanged.wallpaper.desc == "Updated")
+        do {
+            _ = try await fetch(remote("2026-09-22"), now: date(22, 9))
+            fatalError("Changed date with old photo was accepted")
+        } catch WallpaperError.wallpaperNotUpdated { }
+        precondition(requests.count == 1)
+        do {
+            _ = try await fetch(remote("2026-09-22", name: "new.png", url: "https://example.com/new.png"),
+                                now: date(22, 9))
+            fatalError("Changed URL with identical old image was accepted")
+        } catch WallpaperError.wallpaperNotUpdated { }
+        precondition(requests.count == 2)
+        precondition(cached.refreshedAt == date(21, 9) && due(cached.refreshedAt, date(22, 9)))
+        let newSource = CIImage(color: CIColor(red: 0.2, green: 0.5, blue: 0.8))
+            .cropped(to: source.extent)
+        let newData = context.pngRepresentation(of: newSource, format: .RGBA8, colorSpace: colorSpace)!
+        let updated = try await fetch(remote("2026-09-22", name: "new.png", url: "https://example.com/new.png"),
+                                      now: date(22, 9), imageData: newData)
+        precondition(requests.count == 2 && updated.originalName != cached.originalName)
+        precondition(updated.wallpaper.date == "2026-09-22" && updated.refreshedAt == date(22, 9))
+        let first = try await fetch(remote("2026-09-21"), current: nil)
+        precondition(requests.count == 2 && first.wallpaper.date == "2026-09-21")
+        let moved = try await fetch(remote("2026-09-21", url: "https://example.com/moved.png"))
+        precondition(requests.count == 2 && moved.originalName == cached.originalName)
+        try FileManager.default.removeItem(at: cached.imageURL(in: directory, dark: true))
+        let repaired = try await fetch(remote("2026-09-21"))
+        precondition(requests.count == 2 && repaired.originalName != cached.originalName)
+        precondition(FileManager.default.fileExists(atPath: repaired.imageURL(in: directory, dark: true).path))
+        print("PASS: scheduling, rendering, cache, invalid image, date validation, photo comparison, cache repair")
     }
 }

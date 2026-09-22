@@ -31,21 +31,47 @@ enum WallpaperError: Error {
     case invalidHTTPResponse
     case httpStatus(Int)
     case invalidImage
+    case wallpaperNotUpdated
 }
 
 enum WallpaperStore {
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/DailyWallpaper", isDirectory: true)
 
-    static func fetch(in directory: URL, now: Date = Date()) async throws -> CachedWallpaper {
+    static func fetch(in directory: URL, current: CachedWallpaper? = nil, now: Date = Date(),
+                      calendar: Calendar = .current,
+                      load: (URL) async throws -> Data = download) async throws -> CachedWallpaper {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: now)
         var components = URLComponents(string: "https://bing.wdbyte.com/today")!
-        components.queryItems = [URLQueryItem(name: "date", value: formatter.string(from: now))]
-        let wallpaper = try JSONDecoder().decode(Wallpaper.self, from: await download(components.url!))
-        let data = try await download(wallpaper.url)
+        components.queryItems = [URLQueryItem(name: "date", value: today)]
+        let wallpaper = try JSONDecoder().decode(Wallpaper.self, from: await load(components.url!))
+        guard wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+        if let current,
+           wallpaper.url == current.wallpaper.url,
+           wallpaper.fileName == current.wallpaper.fileName {
+            guard current.wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+            if [false, true].allSatisfy({ FileManager.default.fileExists(atPath:
+                current.imageURL(in: directory, dark: $0).path) }) {
+                return CachedWallpaper(wallpaper: wallpaper, originalName: current.originalName,
+                                       darkName: current.darkName, refreshedAt: now)
+            }
+        }
+        let data = try await load(wallpaper.url)
+        if let current,
+           let original = try? Data(contentsOf: current.imageURL(in: directory, dark: false)),
+           original == data {
+            // 日期或链接变化不代表照片已更新，旧照片不能完成当天的刷新。
+            guard current.wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+            if FileManager.default.fileExists(atPath: current.imageURL(in: directory, dark: true).path) {
+                return CachedWallpaper(wallpaper: wallpaper, originalName: current.originalName,
+                                       darkName: current.darkName, refreshedAt: now)
+            }
+        }
         return try prepare(wallpaper, data: data, in: directory, now: now)
     }
 
@@ -100,6 +126,7 @@ final class WallpaperApplication: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let detailItem = NSMenuItem(title: "正在加载壁纸…", action: nil, keyEquivalent: "")
     private let modeItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let photoItem = NSMenuItem(title: "当前照片", action: nil, keyEquivalent: "")
     private var refreshItem: NSMenuItem!
     private var appearanceObservation: NSKeyValueObservation?
     private var timer: Timer?
@@ -163,6 +190,7 @@ final class WallpaperApplication: NSObject, NSApplicationDelegate {
         modeItem.isEnabled = false
         menu.addItem(detailItem)
         menu.addItem(modeItem)
+        menu.addItem(photoItem)
         menu.addItem(.separator())
         refreshItem = menu.addItem(withTitle: "立即更新壁纸", action: #selector(refreshNow), keyEquivalent: "")
         refreshItem.target = self
@@ -176,6 +204,10 @@ final class WallpaperApplication: NSObject, NSApplicationDelegate {
 
     @objc private func refreshNow() { refresh() }
     @objc private func openDirectory() { NSWorkspace.shared.open(directory) }
+    @objc private func openOriginal() {
+        guard let current else { return }
+        NSWorkspace.shared.open(current.imageURL(in: directory, dark: false))
+    }
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(nil)
@@ -207,16 +239,22 @@ final class WallpaperApplication: NSObject, NSApplicationDelegate {
             }
             do {
                 let directory = self.directory
+                let previous = current
                 // 图片解码与渲染放在后台，避免阻塞菜单和系统外观事件。
                 let cached = try await Task.detached(priority: .utility) {
-                    try await WallpaperStore.fetch(in: directory)
+                    try await WallpaperStore.fetch(in: directory, current: previous)
                 }.value
                 try JSONEncoder().encode(cached).write(to: manifestURL, options: .atomic)
                 current = cached
                 needsRetry = false
                 retryAfter = .distantPast
                 applyCurrent()
-                log("壁纸下载成功：\(cached.wallpaper.date) \(cached.wallpaper.desc)")
+                log("\(cached.originalName == previous?.originalName ? "壁纸已是最新" : "壁纸更新成功")：\(cached.wallpaper.date) \(cached.wallpaper.desc)")
+            } catch WallpaperError.wallpaperNotUpdated {
+                needsRetry = true
+                retryAfter = Date().addingTimeInterval(10 * 60)
+                detailItem.title = "今日照片尚未更新，10 分钟后重试"
+                log("今日照片尚未更新，保留当前壁纸")
             } catch {
                 needsRetry = true
                 retryAfter = Date().addingTimeInterval(10 * 60)
@@ -246,10 +284,45 @@ final class WallpaperApplication: NSObject, NSApplicationDelegate {
 
     private func updateMenu() {
         modeItem.title = isDark ? "跟随系统：深色壁纸" : "跟随系统：原始壁纸"
+        updatePhotoMenu()
         if let current {
-            detailItem.title = "今日壁纸：\(current.wallpaper.date)"
+            detailItem.title = "当前壁纸：\(current.wallpaper.date)"
             statusItem.button?.toolTip = current.wallpaper.desc
         }
+    }
+
+    private func updatePhotoMenu() {
+        photoItem.isEnabled = current != nil
+        guard let current else {
+            photoItem.submenu = nil
+            return
+        }
+        let menu = NSMenu(title: "当前照片")
+        menu.autoenablesItems = false
+        let description = current.wallpaper.desc.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = NSTextField(wrappingLabelWithString: description.isEmpty ? "暂无照片说明" : description)
+        label.font = .menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        label.preferredMaxLayoutWidth = 320
+        label.frame = NSRect(x: 16, y: 10, width: 320, height: label.fittingSize.height)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 352, height: label.frame.height + 20))
+        view.addSubview(label)
+        let descriptionItem = NSMenuItem(title: label.stringValue, action: nil, keyEquivalent: "")
+        descriptionItem.view = view
+        menu.addItem(descriptionItem)
+        menu.addItem(.separator())
+        let region = current.wallpaper.region.trimmingCharacters(in: .whitespacesAndNewlines)
+        let regionName = Locale.current.localizedString(forRegionCode: region.uppercased()) ?? region
+        let confirmedAt = DateFormatter.localizedString(from: current.refreshedAt,
+                                                       dateStyle: .medium, timeStyle: .short)
+        for text in ["照片日期：\(current.wallpaper.date)",
+                     "来源地区：\(region.isEmpty ? "未知" : regionName)",
+                     "上次确认：\(confirmedAt)"] {
+            menu.addItem(withTitle: text, action: nil, keyEquivalent: "").isEnabled = false
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "打开原图", action: #selector(openOriginal), keyEquivalent: "").target = self
+        photoItem.submenu = menu
     }
 
     func applicationWillTerminate(_ notification: Notification) {
