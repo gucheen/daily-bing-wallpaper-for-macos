@@ -70,10 +70,10 @@ struct WallpaperStoreTests {
                 return imageData
             }
         }
-        for staleDate in ["2026-09-20", "2026-09-22", "invalid"] {
+        for staleDate in ["2026-09-20", "invalid", "2026-09-31", "2026-9-22"] {
             do {
                 _ = try await fetch(remote(staleDate))
-                fatalError("Non-current date was accepted")
+                fatalError("Stale or invalid date was accepted")
             } catch WallpaperError.wallpaperNotUpdated { }
             precondition(requests.count == 1)
         }
@@ -96,6 +96,31 @@ struct WallpaperStoreTests {
         let newSource = CIImage(color: CIColor(red: 0.2, green: 0.5, blue: 0.8))
             .cropped(to: source.extent)
         let newData = context.pngRepresentation(of: newSource, format: .RGBA8, colorSpace: colorSpace)!
+        let early = try await fetch(remote("2026-09-23", name: "early.png", url: "https://example.com/early.png"),
+                                    imageData: newData)
+        precondition(requests.count == 2 && early.originalName != cached.originalName)
+        precondition(early.wallpaper.date == "2026-09-23" && early.refreshedAt == evening)
+        for now in [evening, date(22, 9)] {
+            let reused = try await fetch(early.wallpaper, current: early, now: now, imageData: newData)
+            precondition(requests.count == 1 && reused.originalName == early.originalName)
+            precondition(reused.refreshedAt == now)
+        }
+        let earlyMoved = try await fetch(remote("2026-09-23", name: "moved.png", url: "https://example.com/moved.png"),
+                                         current: early, imageData: newData)
+        precondition(requests.count == 2 && earlyMoved.originalName == early.originalName)
+        for olderDate in ["2026-09-21", "2026-09-22"] {
+            do {
+                _ = try await fetch(remote(olderDate), current: early)
+                fatalError("Earlier wallpaper replaced a future wallpaper")
+            } catch WallpaperError.wallpaperNotUpdated { }
+            precondition(requests.count == 1)
+        }
+        let earlyFirst = try await fetch(early.wallpaper, current: nil, imageData: newData)
+        precondition(requests.count == 2 && earlyFirst.wallpaper.date == "2026-09-23")
+        try FileManager.default.removeItem(at: early.imageURL(in: directory, dark: true))
+        let earlyRepaired = try await fetch(early.wallpaper, current: early, imageData: newData)
+        precondition(requests.count == 2 && earlyRepaired.originalName != early.originalName)
+        precondition(FileManager.default.fileExists(atPath: earlyRepaired.imageURL(in: directory, dark: true).path))
         let updated = try await fetch(remote("2026-09-22", name: "new.png", url: "https://example.com/new.png"),
                                       now: date(22, 9), imageData: newData)
         precondition(requests.count == 2 && updated.originalName != cached.originalName)

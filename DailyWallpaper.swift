@@ -46,15 +46,21 @@ enum WallpaperStore {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
         let today = formatter.string(from: now)
         var components = URLComponents(string: "https://bing.wdbyte.com/today")!
         components.queryItems = [URLQueryItem(name: "date", value: today)]
         let wallpaper = try JSONDecoder().decode(Wallpaper.self, from: await load(components.url!))
-        guard wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+        guard let photoDate = formatter.date(from: wallpaper.date),
+              formatter.string(from: photoDate) == wallpaper.date,
+              wallpaper.date >= today else { throw WallpaperError.wallpaperNotUpdated }
+        if let current, wallpaper.date < current.wallpaper.date {
+            throw WallpaperError.wallpaperNotUpdated
+        }
         if let current,
            wallpaper.url == current.wallpaper.url,
            wallpaper.fileName == current.wallpaper.fileName {
-            guard current.wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+            guard current.wallpaper.date >= today else { throw WallpaperError.wallpaperNotUpdated }
             if [false, true].allSatisfy({ FileManager.default.fileExists(atPath:
                 current.imageURL(in: directory, dark: $0).path) }) {
                 return CachedWallpaper(wallpaper: wallpaper, originalName: current.originalName,
@@ -66,7 +72,7 @@ enum WallpaperStore {
            let original = try? Data(contentsOf: current.imageURL(in: directory, dark: false)),
            original == data {
             // 日期或链接变化不代表照片已更新，旧照片不能完成当天的刷新。
-            guard current.wallpaper.date == today else { throw WallpaperError.wallpaperNotUpdated }
+            guard current.wallpaper.date >= today else { throw WallpaperError.wallpaperNotUpdated }
             if FileManager.default.fileExists(atPath: current.imageURL(in: directory, dark: true).path) {
                 return CachedWallpaper(wallpaper: wallpaper, originalName: current.originalName,
                                        darkName: current.darkName, refreshedAt: now)
